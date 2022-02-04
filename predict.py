@@ -65,6 +65,7 @@ def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str],
     for idx, ecg_lead in enumerate(ecg_leads):
         print(idx)
         anzahl = len(ecg_lead)
+        ecg_lead = signal.sosfilt(sos, ecg_lead)
         faktorceil = int(np.ceil(anzahl / minimum))
         if faktorceil > 1:
             biggersize = faktorceil * minimum - anzahl
@@ -74,14 +75,20 @@ def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str],
                 start = int(j * (minimum - overlapping))
                 end = int(start + minimum)
                 x[j] = ecg_lead[start: end]
-                print("x[j]: ", x[j])
-                print("x[j].shape: ", x[j].shape)
+
+                ###mögliche Fehlerquelle anfang
+
+                '''
                 smoothed = sm.nonparametric.lowess(exog=np.arange(len(x[j])), endog=x[j], frac=0.2)
-                print("smoothed.shape ", smoothed.shape)
+               print("smoothed.shape ", smoothed.shape)
                 smoothed = smoothed.T
                 smoothed = smoothed[1]
                 x[j]=x[j]-smoothed
-                x[j]  = (x[j]  - min(x[j] ))/(max(x[j] )-min(x[j] ))
+                '''
+
+                ####mögliche Fehlerquelle ende
+
+                x[j] = (x[j] - min(x[j] ))/(max(x[j] )-min(x[j] ))
             x = x.reshape((x.shape[0], x.shape[1], 1))
             predictarray = model.predict(x)
             print(predictarray)
@@ -102,17 +109,21 @@ def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str],
             x = np.zeros(minimum)
             for k in range(0, anzahl):
                 x[k] = ecg_lead[k]
-            print("x: ", x)
-            print("x.shape: ", x.shape)
+
+            ########vermutliche Fehlerquelle
+            '''
             smoothed = sm.nonparametric.lowess(exog=np.arange(len(x)), endog=x, frac=0.2)
             print("smoothed.shape ", smoothed.shape)
             smoothed = smoothed.T
             smoothed = smoothed[1]
-            x = x- smoothed
+            x = x - smoothed
+            '''
+            ###vermutliche Fehlerquelle Ende
+
             x = (x - min(x)) / (max(x) - min(x))
             x = x.reshape((1, x.shape[0], 1))
             predict = model.predict(x)
-            if predict[0] < 0.5:
+            if predict[0][0] < 0.5:
                 predictions.append((ecg_names[idx], 'A'))
             else:
                 predictions.append((ecg_names[idx], 'N'))
