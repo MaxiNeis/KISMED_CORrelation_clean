@@ -20,7 +20,7 @@ import statsmodels.api as sm
 
 
 ###Signatur der Methode (Parameter und Anzahl return-Werte) darf nicht verändert werden
-def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str], model_name: str = 'model_4.h5',
+def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str], model_name: str = 'model.npy',
                    is_binary_classifier: bool = False) -> List[Tuple[str, str]]:
     '''
     Parameters

@@ -7,6 +7,8 @@ Beispiel Code und  Spielwiese
 import csv
 import os
 import math
+from typing import List, Tuple
+import argparse
 import scipy.io as sio
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -33,126 +35,143 @@ from wettbewerb import load_references
 
 ### if __name__ == '__main__':  # bei multiprocessing auf Windows notwendig
 
-ecg_leads, ecg_labels, fs, ecg_names = load_references()  # Importiere EKG-Dateien, zugehörige Diagnose, Sampling-Frequenz (Hz) und Name                                                # Sampling-Frequenz 300 Hz
+# Positional Encoding
 
-ecg_array = []
-afib = []
-for idx, ecg_lead in enumerate(ecg_leads):
-    ecg_subarrays, is_onedimensional = skalpell(ecg_array)
-    if not is_onedimensional:
-        for cnt_subarrays in range(len(ecg_subarrays)):
-            ecg_subarrays[cnt_subarrays] = preprocessing_training(ecg_subarrays[cnt_subarrays])
+
+
+def fine_tuning(ecg_leads: List[np.ndarray], fs: float, ecg_labels: List[str], model_name: str = 'model_5.h5', new_model_name: str = 'Transformer_Encoder_finetued.h5',
+                from_scratch: bool = False) -> List[Tuple[str, str]]:
+
+    ecg_array = []
+    afib = []
+    for idx, ecg_lead in enumerate(ecg_leads):
+        ecg_subarrays, is_onedimensional = skalpell(ecg_lead)  
+        if not is_onedimensional:
+            for cnt_subarrays in range(len(ecg_subarrays)):
+                ecg_subarrays[cnt_subarrays] = preprocessing_training(ecg_subarrays[cnt_subarrays])
+                if ecg_labels[idx] == 'N':                     
+                    afib.append(0)
+                    ecg_array.append(ecg_subarrays[cnt_subarrays])
+                elif ecg_labels[idx] == 'A':
+                    afib.append(1)
+                    ecg_array.append(ecg_subarrays[cnt_subarrays])
+        else:
+            ecg_subarrays = preprocessing_training(ecg_subarrays)
             if ecg_labels[idx] == 'N':
                 afib.append(0)
-                ecg_array.append(ecg_subarrays[cnt_subarrays])
-            if ecg_labels[idx] == 'A':
+                ecg_array.append(ecg_subarrays)
+            elif ecg_labels[idx] == 'A':
                 afib.append(1)
-                ecg_array.append(ecg_subarrays[cnt_subarrays])
-    else:
-        ecg_subarrays = preprocessing_training(ecg_subarrays)
-        if ecg_labels[idx] == 'N':
-            afib.append(0)
-            ecg_array.append(ecg_subarrays)
-        if ecg_labels[idx] == 'A':
-            afib.append(1)
-            ecg_array.append(ecg_subarrays)
+                ecg_array.append(ecg_subarrays)
 
-x_train = np.asarray(ecg_array)
-y_train = np.asarray(afib)
+    x_train = np.asarray(ecg_array)
+    y_train = np.asarray(afib)
 
-x_train = x_train.reshape((x_train.shape[0], x_train.shape[1], 1))
-x_train = x_train[idx]
-y_train = y_train[idx]
-y_train[y_train == -1] = 0
+    x_train = x_train.reshape((x_train.shape[0], x_train.shape[1], 1))
+    x_train = x_train[idx]
+    y_train = y_train[idx]
+    y_train[y_train == -1] = 0
 
-n_classes = len(np.unique(y_train))
+    n_classes = len(np.unique(y_train))
 
-# Positional Encoding
-def pos(x):
-  dims = x.shape.as_list()
-  d_model = dims[2]
-  positions = dims[1]
-  matrix = np.zeros((positions, d_model))
-  for pos in range(positions):
-    for i in range(0,d_model-1,2):
-      matrix[pos][i]=math.sin(pos/(10000**((2*i)/d_model)))
-      matrix[pos][i+1]=math.cos(pos/(10000**((2*i)/d_model)))
-  tensor = tf.constant([matrix], dtype=tf.float32)
-  return tensor
+    def pos(x):
+        dims = x.shape.as_list()
+        d_model = dims[2]
+        positions = dims[1]
+        matrix = np.zeros((positions, d_model))
+        for pos in range(positions):
+            for i in range(0,d_model-1,2):
+                matrix[pos][i]=math.sin(pos/(10000**((2*i)/d_model)))
+                matrix[pos][i+1]=math.cos(pos/(10000**((2*i)/d_model)))
+        tensor = tf.constant([matrix], dtype=tf.float32)
+        return tensor
 
-def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
-    # Attention and Normalization
-    x = layers.LayerNormalization(epsilon=1e-6)(inputs)
-    x = layers.MultiHeadAttention(
-        key_dim=head_size, num_heads=num_heads, dropout=dropout
-    )(x, x)
-    x = layers.Dropout(dropout)(x)
-    res = x + inputs
+    def transformer_encoder(inputs, head_size, num_heads, ff_dim, dropout=0):
+        # Attention and Normalization
+        x = layers.LayerNormalization(epsilon=1e-6)(inputs)
+        x = layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(x, x)
+        x = layers.Dropout(dropout)(x)
+        res = x + inputs
 
-     #Feed Forward Part
-    x = layers.LayerNormalization(epsilon=1e-6)(res)
-    x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(x)
-    x = layers.Dropout(dropout)(x)
-    x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
-    return x + res
+        #Feed Forward Part
+        x = layers.LayerNormalization(epsilon=1e-6)(res)
+        x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(x)
+        x = layers.Dropout(dropout)(x)
+        x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+        return x + res
 
-def build_model(input_shape, head_size, num_heads, ff_dim, num_transformer_blocks, mlp_units, dropout=0, mlp_dropout=0,):
-    inputs = keras.Input(shape=input_shape)
-    x = inputs
-    x = layers.Conv1D(filters=64, kernel_size=64, strides=8, activation="relu", padding='same')(x)
-    x = layers.GlobalMaxPooling1D(data_format="channels_first", keepdims=True)(x)
-    x = layers.Conv1D(filters=128, kernel_size=32, strides=4, activation="relu", padding='same')(x)
-    x = layers.GlobalMaxPooling1D(data_format="channels_first", keepdims=True)(x)
-    x = x + pos(x)
-    for _ in range(num_transformer_blocks):
-        x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout)
+    def build_model(input_shape, head_size, num_heads, ff_dim, num_transformer_blocks, mlp_units, dropout=0, mlp_dropout=0,):
+        inputs = keras.Input(shape=input_shape)
+        x = inputs
+        x = layers.Conv1D(filters=64, kernel_size=64, strides=8, activation="relu", padding='same')(x)
+        x = layers.GlobalMaxPooling1D(data_format="channels_first", keepdims=True)(x)
+        x = layers.Conv1D(filters=128, kernel_size=32, strides=4, activation="relu", padding='same')(x)
+        x = layers.GlobalMaxPooling1D(data_format="channels_first", keepdims=True)(x)
+        x = x + pos(x)
+        for _ in range(num_transformer_blocks):
+            x = transformer_encoder(x, head_size, num_heads, ff_dim, dropout)
 
-    x = layers.GlobalAveragePooling1D(data_format="channels_first")(x)
-    for dim in mlp_units:
-        x = layers.Dense(dim, activation="linear")(x)
-        x = layers.Dropout(mlp_dropout)(x)
-        x = layers.Dense(dim, activation="relu")(x)
-        x = layers.Dropout(mlp_dropout)(x)
-        x = layers.Dense(dim, activation="relu")(x)
-    outputs = layers.Dense(n_classes, activation="sigmoid")(x)
-    return keras.Model(inputs, outputs)
+        x = layers.GlobalAveragePooling1D(data_format="channels_first")(x)
+        for dim in mlp_units:
+            x = layers.Dense(dim, activation="linear")(x)
+            x = layers.Dropout(mlp_dropout)(x)
+            x = layers.Dense(dim, activation="relu")(x)
+            x = layers.Dropout(mlp_dropout)(x)
+            x = layers.Dense(dim, activation="relu")(x)
+        outputs = layers.Dense(n_classes, activation="sigmoid")(x)
+        return keras.Model(inputs, outputs)
 
-input_shape = x_train.shape[1:]
-lr = 1e-3
-
-model = build_model(
-    input_shape,
-    head_size=128,
-    num_heads=4,
-    ff_dim=512,
-    num_transformer_blocks=4,
-    mlp_units=[256, 256],
-    mlp_dropout=0.5,
-    dropout=0.25,
-)
-
-lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+    input_shape = x_train.shape[1:]
+    lr = 1e-3
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
     lr,
     decay_steps=100000,
     decay_rate=0.985,
     staircase=True)
 
-model.compile(
-    loss="sparse_categorical_crossentropy",
-    optimizer=keras.optimizers.Adam(learning_rate=lr_schedule),
-    metrics=["sparse_categorical_accuracy"],
-)
-model.summary()
+    model = None
 
-callbacks = [keras.callbacks.EarlyStopping(monitor="val_sparse_categorical_accuracy",patience=50, restore_best_weights=True)]
+    if from_scratch == False:
+        model = keras.models.load_model(model_name)
+        model.trainable = True
+        callbacks = [keras.callbacks.EarlyStopping(patience=50, restore_best_weights=True)]
+        model.compile(optimizer=keras.optimizers.Adam(learning_rate = 1e-4),  # Very low learning rate
+        loss="sparse_categorical_crossentropy",
+        metrics=["sparse_categorical_accuracy"])
+        #metrics=[tf.keras.metrics.Precision(class_id=1)])
+        model.summary()
+        # Train end-to-end. Be careful to stop before you overfit!
+        model.fit(x_train, y_train, epochs=50, batch_size=200, callbacks=callbacks, validation_split=0.2)
 
-model.fit(
-    x_train,
-    y_train,
-    validation_split=0.2,
-    epochs=800,
-    batch_size=256,
-    callbacks=callbacks,
-)
+    if from_scratch == True:
+        model = build_model(
+            input_shape,
+            head_size=128,
+            num_heads=4,
+            ff_dim=512,
+            num_transformer_blocks=4,
+            mlp_units=[256, 256],
+            mlp_dropout=0.5,
+            dropout=0.25,
+        )
+        model.compile(
+            loss="sparse_categorical_crossentropy",
+            optimizer=keras.optimizers.Adam(learning_rate=lr_schedule),
+            metrics=["sparse_categorical_accuracy"],
+        )
+        model.summary()
+        callbacks = [keras.callbacks.EarlyStopping(monitor="val_sparse_categorical_accuracy",patience=50,restore_best_weights=True)]
+        model.fit(
+            x_train,
+            y_train,
+            validation_split=0.2,
+            epochs=250,
+            batch_size=256,
+            callbacks=callbacks,
+        )
 
-model.save("Transformer_Encoder.h5")
+    if ".h5" not in new_model_name:
+        new_model_name += ".h5" 
+    model.save(new_model_name)
+    print("model " + new_model_name + " has been saved.")
+    return model
