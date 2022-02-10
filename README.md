@@ -1,23 +1,16 @@
 # 18-ha-2010-pj
-Demo-Code zum Projektseminar "Wettbewerb künstliche Intelligenz in der Medizin" WiSe 2021/2022. Das Beispiel definiert gleichzeitig das Interface zu unserem Evaluierungs-System.
+Code-Abgabe zum Projektseminar "Wettbewerb künstliche Intelligenz in der Medizin" WiSe 2021/2022 vom Team CORrelation.
+Wir verwenden ein tiefes neuronales Netz, genauer ein Transformer-Netz bzw. den Encoder-Teil des Transformers.
 
-## Erste Schritte
+## How it works
 
-1. Klone/Forke dieses Repository
-2. Richte ein eigenes Repository auf github/gitlab ein. Darüber könnt ihr später die Abgaben eurer Modelle machen.
-3. Python Environment anlegen (z.B. mit Anaconda), dann kann "requirements.txt" mit `pip install -r requirements.txt` ausgeführt werden und installiert die notwendigen Pakete 
+1. Vorverarbeitung der rohen Input-Daten in der Preprocessing-Pipeline
+2. Füttern der vorverarbeiteten Daten an das Netz, um es zu trainieren oder - falls ein trainiertes Modell schon vorliegt - um es für Vorhersagen zu nutzen.
 
-## Wichtig!
+## Preprocessing-Pipeline
 
-Die Dateien 
-- predict_pretrained.py
-- wettbewerb.py
-- score.py
+Die EKG-Rohdaten liegen als beliebig lange, eindimensionale Zeitreihe vor. Unser Transformer-Encoder verwendet eine feste Input-Size, weshalb im ersten Schritt das Signal in - je nach Gesamtlänge des Arrays - unterschiedlich viele, der Input-Size entsprechend lange Subarrays aufgeteilt wird (Skalpell.py).
+Anschließend werden eine Rauschreduzierung mit einem 'Butterworth'- und einem 'Non Local Mean'- Filter und eine Baseline-Angleichung mittels 'LOESS Curve Fitting' (Vgl.: https://www.nature.com/articles/s41597-020-0386-x.pdf).
 
-werden von uns beim testen auf den ursprünglichen Stand zurückgesetzt. Es ist deshalb nicht empfehlenswert diese zu verändern. In predict.py ist für die Funktion `predict_labels` das Interface festgelegt, das wir für die Evaluierung verwenden.
-
-`predict_labels(ecg_leads : List[np.ndarray], fs : float, ecg_names : List[str], model_name : str='model.npy',is_binary_classifier : bool=False) -> List[Tuple[str,str]]`
-
-Insbesondere den `model_name` könnt ihr verwenden um bei der Abgabe verschiedene Modelle zu kennzeichnen, welche zum Beispiel durch eure Ordnerstruktur dargestellt werden. Der Parameter `is_binary_classifier` ermöglicht es zu entscheiden, ob mit dem Modell nur die zwei Hauptlabels "Atrial Fibrillation ['A']" und "Normal ['N']" klassfiziert werden (binärer Klassifikator), oder alle vier Label.
-
-Bitte gebt alle verwendeten packages in "requirements.txt" bei der Abgabe zur Evaluation an und testet dies vorher in einer frischen Umgebung mit `pip install -r requirements.txt`. Als Basis habt ihr immer die vorgegebene "requirements.txt"-Datei. Wir selbst verwenden Python 3.8. Wenn es ein Paket gibt, welches nur unter einer anderen Version funktioniert ist das auch in Ordung. In dem Fall bitte Python-Version mit angeben.
+## Modell
+Transformer-Encoder mit vorgeschalteten Convolutional Layern und Positional Encoding und nachgeschaltetem Feed-Forward Teil

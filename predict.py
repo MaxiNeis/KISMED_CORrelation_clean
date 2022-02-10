@@ -8,21 +8,16 @@ Skript testet das vortrainierte Modell
 """
 
 import csv
-
+from Skalpell import skalpell
+from Preprocessing import preprocessing_prediction
 import keras
-import statsmodels.api as sm
-import scipy.io as sio
-import matplotlib.pyplot as plt
 import numpy as np
-import os
 from typing import List, Tuple
-import math
-import sys
 from scipy import signal
-import scipy
 from tensorflow import keras
-from PIL import Image
 import statsmodels.api as sm
+
+
 
 ###Signatur der Methode (Parameter und Anzahl return-Werte) darf nicht verändert werden
 def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str], model_name: str = 'model_4.h5',
@@ -63,66 +58,49 @@ def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str],
 
 
     for idx, ecg_lead in enumerate(ecg_leads):
-        print(idx)
-        anzahl = len(ecg_lead)
-        ecg_lead = signal.sosfilt(sos, ecg_lead)
-        faktorceil = int(np.ceil(anzahl / minimum))
-        if faktorceil > 1:
-            biggersize = faktorceil * minimum - anzahl
-            overlapping = np.ceil(biggersize / (faktorceil - 1))
-            x = np.zeros((faktorceil, minimum))
-            for j in range(0, faktorceil):
-                start = int(j * (minimum - overlapping))
-                end = int(start + minimum)
-                x[j] = ecg_lead[start: end]
+        ecg_subarrays, is_onedimensional = skalpell(ecg_lead)
 
-                ###mögliche Fehlerquelle anfang
+        ### mehrdimensionales ECG-Array
+        if not is_onedimensional:
+            for cnt_subarrays in range(len(ecg_subarrays)):
+                ecg_subarrays[cnt_subarrays] = preprocessing_prediction(ecg_subarrays[cnt_subarrays])
+            ecg_subarrays = ecg_subarrays.reshape((ecg_subarrays.shape[0], ecg_subarrays.shape[1], 1))
 
-                '''
-                smoothed = sm.nonparametric.lowess(exog=np.arange(len(x[j])), endog=x[j], frac=0.2)
-               print("smoothed.shape ", smoothed.shape)
-                smoothed = smoothed.T
-                smoothed = smoothed[1]
-                x[j]=x[j]-smoothed
-                '''
+            ### Vorhersage des Modells
+            predictarray = model.predict(ecg_subarrays)
 
-                ####mögliche Fehlerquelle ende
+            #### Möglichkeit zum Fine-Tuning ####
 
-                x[j] = (x[j] - min(x[j] ))/(max(x[j] )-min(x[j] ))
-            x = x.reshape((x.shape[0], x.shape[1], 1))
-            predictarray = model.predict(x)
-            print(predictarray)
-            value = 0
-            av=0
-            for d in range(0, len(x)):
-                pred = predictarray[d][1]
-                av = av + (pred / len(x))
-                if pred >= 0.8:
-                    value = value + 1
-            qu = value / len(x)
-            #print(qu)
-            if qu >= 0.34 and av>0.6:
+            afib_prediction_average_threshold = 0.73 #0.6  # Gibt den Durchschnitt an, der für das gesamte Array erlangt werden muss, damit das Gesamtarray als afibrial gewertet wird
+            threshold_for_counting_afibs = 0.8  # Gibt die Schwelle an, ab der eine Prediction auch als affibrial gewertet wird (pro subarray)
+            afib_ratio_threshold =0.0 # 0.34  # Gibt den Anteil der Subarrays an, die als afibrial gewertet werden müssen, damit das Gesamt-Array als affibrial gewertet wird
+
+            #####################################
+
+            counter_afibs = 0
+            average_prediction = 0
+
+
+            for cnt_subarrays in range(len(ecg_subarrays)):
+                prediction_subarray = predictarray[cnt_subarrays][1]
+                average_prediction = average_prediction + (prediction_subarray / len(ecg_subarrays))
+                if prediction_subarray >= threshold_for_counting_afibs:
+                    counter_afibs = counter_afibs + 1
+            ratio_afib_subarrays = counter_afibs / len(ecg_subarrays)
+
+            ### Entscheidung
+            if ratio_afib_subarrays >= afib_ratio_threshold and average_prediction >= afib_prediction_average_threshold:
                 predictions.append((ecg_names[idx], 'A'))
             else:
                 predictions.append((ecg_names[idx], 'N'))
+
+        ### eindimensionales ECG-Array
         else:
-            x = np.zeros(minimum)
-            for k in range(0, anzahl):
-                x[k] = ecg_lead[k]
+            ecg_subarrays = preprocessing_prediction(ecg_subarrays)
+            ecg_subarrays = ecg_subarrays.reshape((1, ecg_subarrays.shape[0], 1))
+            predict = model.predict(ecg_subarrays)
 
-            ########vermutliche Fehlerquelle
-            '''
-            smoothed = sm.nonparametric.lowess(exog=np.arange(len(x)), endog=x, frac=0.2)
-            print("smoothed.shape ", smoothed.shape)
-            smoothed = smoothed.T
-            smoothed = smoothed[1]
-            x = x - smoothed
-            '''
-            ###vermutliche Fehlerquelle Ende
-
-            x = (x - min(x)) / (max(x) - min(x))
-            x = x.reshape((1, x.shape[0], 1))
-            predict = model.predict(x)
+            ### Prediction des Modells
             if predict[0][0] < 0.5:
                 predictions.append((ecg_names[idx], 'A'))
             else:
@@ -133,4 +111,5 @@ def predict_labels(ecg_leads: List[np.ndarray], fs: float, ecg_names: List[str],
     # ------------------------------------------------------------------------------
     return predictions  # Liste von Tupels im Format (ecg_name,label) - Muss unverändert bleiben!
 
- 
+
+
