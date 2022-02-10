@@ -13,6 +13,7 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras import Model
 from tensorflow.keras import layers
 import numpy as np
 from Skalpell import skalpell
@@ -35,12 +36,9 @@ from wettbewerb import load_references
 
 ### if __name__ == '__main__':  # bei multiprocessing auf Windows notwendig
 
-# Positional Encoding
 
-
-
-def fine_tuning(ecg_leads: List[np.ndarray], fs: float, ecg_labels: List[str], model_name: str = 'model_5.h5', new_model_name: str = 'Transformer_Encoder_finetued.h5',
-                from_scratch: bool = False) -> List[Tuple[str, str]]:
+def fine_tuning(ecg_leads: List[np.ndarray], ecg_labels: List[str], fs: float, ecg_names: List[str], model_name: str = 'model_5.h5', new_model_name: str = 'Transformer_Encoder_finetuned.h5',
+                from_scratch: bool = False) -> Model:
 
     ecg_array = []
     afib = []
@@ -68,12 +66,14 @@ def fine_tuning(ecg_leads: List[np.ndarray], fs: float, ecg_labels: List[str], m
     y_train = np.asarray(afib)
 
     x_train = x_train.reshape((x_train.shape[0], x_train.shape[1], 1))
+    idx = np.random.permutation(len(x_train))
     x_train = x_train[idx]
     y_train = y_train[idx]
     y_train[y_train == -1] = 0
 
     n_classes = len(np.unique(y_train))
 
+    # Positional Encoding
     def pos(x):
         dims = x.shape.as_list()
         d_model = dims[2]
@@ -134,14 +134,14 @@ def fine_tuning(ecg_leads: List[np.ndarray], fs: float, ecg_labels: List[str], m
     if from_scratch == False:
         model = keras.models.load_model(model_name)
         model.trainable = True
-        callbacks = [keras.callbacks.EarlyStopping(patience=50, restore_best_weights=True)]
+        callbacks = [keras.callbacks.EarlyStopping(patience=20, restore_best_weights=True)]
         model.compile(optimizer=keras.optimizers.Adam(learning_rate = 1e-4),  # Very low learning rate
         loss="sparse_categorical_crossentropy",
         metrics=["sparse_categorical_accuracy"])
         #metrics=[tf.keras.metrics.Precision(class_id=1)])
         model.summary()
         # Train end-to-end. Be careful to stop before you overfit!
-        model.fit(x_train, y_train, epochs=50, batch_size=200, callbacks=callbacks, validation_split=0.2)
+        model.fit(x_train, y_train, epochs=100, batch_size=200, callbacks=callbacks, validation_split=0.2)
 
     if from_scratch == True:
         model = build_model(
